@@ -1,5 +1,4 @@
 const line = require("@line/bot-sdk");
-const cron = require("node-cron");
 const express = require("express");
 
 const app = express();
@@ -9,80 +8,79 @@ const client = new line.Client({
   channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN
 });
 
-// ====== 設定區 ======
-const MESSAGE = "📢 這是自動廣播測試";
-const INTERVAL_MINUTES = 20;
-const END_TIME = new Date("2026-01-07T23:00:00+08:00");
-
+// ====== 廣播設定 ======
+const MESSAGE = "📢 這是連續廣播測試";
+const BROADCAST_DURATION_MINUTES = 20; // 總共廣播 20 分鐘
+const BROADCAST_INTERVAL_SECONDS = 10;  // 每 10 秒廣播一次
 const GROUP_IDS = [
-  "Cxxxxxxxxxxxxxxxx"
+  "Cxxxxxxxxxxxxxxxx" // 改成你的群組 ID
 ];
-// ===================
 
-let isBroadcastOn = false;
+let broadcastInterval = null; // 定時器
+let broadcastEndTimeout = null; // 停止計時器
 
-// 廣播功能
-function broadcast() {
-  if (!isBroadcastOn) return;
-
-  const now = new Date();
-  if (now > END_TIME) {
-    isBroadcastOn = false;
-    console.log("⏹ 已到結束時間，自動停止");
-    return;
-  }
-
+// 廣播函數
+function broadcastMessage() {
   GROUP_IDS.forEach(groupId => {
-    client.pushMessage(groupId, {
-      type: "text",
-      text: MESSAGE
-    });
+    client.pushMessage(groupId, { type: "text", text: MESSAGE })
+      .then(() => console.log("✅ 廣播訊息到", groupId))
+      .catch(err => console.error(err));
   });
-
-  console.log("✅ 已廣播", now.toLocaleString());
 }
 
-// 每 20 分鐘檢查一次
-cron.schedule(`*/${INTERVAL_MINUTES} * * * *`, broadcast);
-
-// 接收 LINE 訊息
+// ====== LINE 指令控制 ======
 app.post("/webhook", (req, res) => {
-  const event = req.body.events[0];
-  if (!event || event.type !== "message") {
-    return res.sendStatus(200);
-  }
+  const events = req.body.events;
+  if (!events || events.length === 0) return res.sendStatus(200);
 
-  const text = event.message.text;
-  const replyToken = event.replyToken;
+  events.forEach(event => {
+    if (event.type !== "message" || !event.message) return;
 
-  if (text === "/start") {
-    isBroadcastOn = true;
-    client.replyMessage(replyToken, {
-      type: "text",
-      text: "▶️ 廣播已啟動"
-    });
-  }
+    const text = event.message.text;
+    const replyToken = event.replyToken;
 
-  if (text === "/stop") {
-    isBroadcastOn = false;
-    client.replyMessage(replyToken, {
-      type: "text",
-      text: "⏹ 廣播已停止"
-    });
-  }
+    if (text === "/start") {
+      // 如果已經在廣播就先清掉
+      if (broadcastInterval) clearInterval(broadcastInterval);
+      if (broadcastEndTimeout) clearTimeout(broadcastEndTimeout);
 
-  if (text === "/status") {
-    client.replyMessage(replyToken, {
-      type: "text",
-      text: isBroadcastOn ? "🟢 廣播進行中" : "🔴 廣播已停止"
-    });
-  }
+      broadcastMessage(); // 立即廣播一次
+
+      // 每 10 秒廣播
+      broadcastInterval = setInterval(broadcastMessage, BROADCAST_INTERVAL_SECONDS * 1000);
+
+      // 20 分鐘後自動停止
+      broadcastEndTimeout = setTimeout(() => {
+        clearInterval(broadcastInterval);
+        broadcastInterval = null;
+        broadcastEndTimeout = null;
+        GROUP_IDS.forEach(groupId => {
+          client.pushMessage(groupId, { type: "text", text: "⏹ 連續廣播 20 分鐘結束" })
+            .catch(err => console.error(err));
+        });
+        console.log("⏹ 廣播結束");
+      }, BROADCAST_DURATION_MINUTES * 60 * 1000);
+
+      client.replyMessage(replyToken, { type: "text", text: "▶️ 開始連續廣播 20 分鐘，每 10 秒發送一次" });
+    }
+
+    if (text === "/stop") {
+      if (broadcastInterval) clearInterval(broadcastInterval);
+      if (broadcastEndTimeout) clearTimeout(broadcastEndTimeout);
+      broadcastInterval = null;
+      broadcastEndTimeout = null;
+      client.replyMessage(replyToken, { type: "text", text: "⏹ 廣播已停止" });
+    }
+
+    if (text === "/status") {
+      const status = broadcastInterval ? "🟢 廣播進行中" : "🔴 廣播已停止";
+      client.replyMessage(replyToken, { type: "text", text: status });
+    }
+  });
 
   res.sendStatus(200);
 });
 
-// Render 需要監聽 port
+// ====== Render 監聽 port ======
 const port = process.env.PORT || 3000;
-app.listen(port, () => {
-  console.log("🚀 Bot server running on port", port);
-});
+app.listen(port, () => console.log("🚀 Bot server running on port", port));
