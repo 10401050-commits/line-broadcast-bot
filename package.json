@@ -1,0 +1,12 @@
+{
+  "name": "line-broadcast-bot",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@line/bot-sdk": "^9.0.0",
+    "node-cron": "^3.0.3"
+  }
+}
